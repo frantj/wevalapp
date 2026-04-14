@@ -88,6 +88,12 @@ ___*
 # Node.js V8 compile cache (created by tsx / NODE_COMPILE_CACHE)
 node-compile-cache/
 
+# Azure Agent proxy (contains hardcoded credentials for local dev)
+tools/azure-agent-proxy/
+
+# Local personal docs (not for public repo)
+docs/jesper's docs/
+
 # Sentry
 .sentryclirc
 *.sentry-build-info
