@@ -77,6 +77,12 @@ google-cloud-*
 # Temporary and generated files
 ___*
 *___
+# Azure Agent proxy (contains hardcoded credentials for local dev)
+tools/azure-agent-proxy/
+
+# Local personal docs (not for public repo)
+docs/jesper's docs/
+
 # Sentry
 .sentryclirc
 *.sentry-build-info
