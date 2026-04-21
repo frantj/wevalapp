@@ -23,7 +23,7 @@ import { evaluateFunctionPoints, aggregateCoverageScores } from './coverage-logi
 import { ProgressCallback } from '../services/comparison-pipeline-service.non-stream';
 import pLimit from '@/lib/pLimit';
 import { AdaptiveRateLimiter } from '@/lib/adaptive-rate-limiter';
-import { extractProviderFromModelId, getProviderProfile } from '@/lib/provider-rate-limits';
+import { extractProviderFromModelId, getProviderProfile, parseConcurrencyOverrides, applyOverrides } from '@/lib/provider-rate-limits';
 
 const DEFAULT_JUDGE_CONCURRENCY = 20;
 
@@ -885,8 +885,9 @@ Output: <reflection>The text mentions empathy, which means the criterion is MET 
 
         // Create adaptive limiter for each provider
         const providerLimiters = new Map<string, { adaptive: AdaptiveRateLimiter; limit: ReturnType<typeof pLimit> }>();
+        const judgeConcurrencyOverrides = parseConcurrencyOverrides(process.env.PROVIDER_CONCURRENCY);
         for (const [provider, models] of judgesByProvider.entries()) {
-            const profile = getProviderProfile(provider);
+            const profile = applyOverrides(provider, judgeConcurrencyOverrides);
             // Reuse the same provider profiles as candidate generation
             const adaptiveLimiter = new AdaptiveRateLimiter(provider, profile, this.logger);
 
