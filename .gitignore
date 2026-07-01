@@ -84,7 +84,11 @@ google-cloud-*
 # Temporary and generated files
 ___*
 *___
+
 # Sentry
 .sentryclirc
 *.sentry-build-info
 .env.production
+
+# Local Azure agent proxy (contains hardcoded secrets, local-dev only)
+/tools/azure-agent-proxy/
