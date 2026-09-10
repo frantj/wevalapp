@@ -44,6 +44,37 @@ class GenericHttpClient {
     }
 
     /**
+     * Guards against a provider serving a different model than the one requested.
+     *
+     * Observed in practice: an unfunded Public AI key returned 200 with a fluent answer,
+     * finish_reason 'stop' and plausible token usage, but `model` was an unrelated third-party
+     * model. Nothing downstream would catch that — results store the blueprint's model id,
+     * not the served one — so an evaluation would publish scores attributed to a model that
+     * never ran. Returns an error string on a definite mismatch, or null when it is fine.
+     */
+    private detectModelMismatch(returnedModel?: unknown): string | null {
+        // Not every OpenAI-compatible endpoint echoes a model; absence is not a mismatch.
+        if (typeof returnedModel !== 'string' || returnedModel.trim() === '') return null;
+
+        const requested = this.config.modelName.trim().toLowerCase();
+        const served = returnedModel.trim().toLowerCase();
+
+        // Providers legitimately answer with a more specific id than was asked for — OpenAI
+        // returns gpt-4o-2024-08-06 for gpt-4o — so only an unrelated id counts as a mismatch.
+        if (served === requested || served.startsWith(requested) || requested.startsWith(served)) {
+            return null;
+        }
+
+        const message = `Model mismatch (${this.config.id}): requested '${this.config.modelName}' but the provider served '${returnedModel}'. Refusing the response rather than scoring the wrong model. Set WEVAL_ALLOW_MODEL_MISMATCH=true to downgrade this to a warning.`;
+        if ((process.env.WEVAL_ALLOW_MODEL_MISMATCH || '').toLowerCase() === 'true') {
+            console.warn(`[GenericHttpClient] ${message}`);
+            return null;
+        }
+        console.error(`[GenericHttpClient] ${message}`);
+        return message;
+    }
+
+    /**
      * Mirrors openrouter-client.ts so that a 429 on the custom-model path is retryable
      * by the shared exponential-backoff path in llm-service.
      */
@@ -467,7 +498,12 @@ class GenericHttpClient {
             }
 
             const jsonResponse = await response.json() as any;
-            
+
+            const mismatch = this.detectModelMismatch(jsonResponse?.model);
+            if (mismatch) {
+                return { responseText: '', error: mismatch };
+            }
+
             const responseText = this.parseResponse(jsonResponse);
             const reasoningContent = this.extractReasoningContent(jsonResponse);
 

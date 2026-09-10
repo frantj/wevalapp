@@ -24,6 +24,10 @@ class TestableGenericHttpClient extends GenericHttpClient {
     public testParseRateLimitHeaders(headers: Map<string, string>): Partial<LLMApiCallResult> {
         return (this as any).parseRateLimitHeaders(headers);
     }
+
+    public testDetectModelMismatch(returnedModel?: unknown): string | null {
+        return (this as any).detectModelMismatch(returnedModel);
+    }
 }
 
 describe('GenericHttpClient', () => {
@@ -427,6 +431,55 @@ describe('GenericHttpClient', () => {
             expect(redacted['api-key']).toBe('[redacted]');
             expect(redacted['User-Agent']).toBe('wps-benchmark/6.7');
             expect(client.testGetHeaders()['Authorization']).toBe('Bearer live-secret');
+        });
+    });
+
+    describe('Model mismatch detection', () => {
+        const apertus: CustomModelDefinition = {
+            id: 'publicai:apertus-70b-instruct-2509',
+            url: 'https://api.publicai.co/v1/chat/completions',
+            modelName: 'swiss-ai/apertus-70b-instruct',
+            inherit: 'openai'
+        };
+
+        it('should reject an unrelated model, the real Public AI substitution case', () => {
+            const client = new TestableGenericHttpClient(apertus);
+            const error = client.testDetectModelMismatch('aisingapore/Qwen-SEA-LION-v4-32B-IT');
+
+            expect(error).toContain('Model mismatch');
+            expect(error).toContain('swiss-ai/apertus-70b-instruct');
+            expect(error).toContain('aisingapore/Qwen-SEA-LION-v4-32B-IT');
+        });
+
+        it('should accept the exact model, ignoring case and whitespace', () => {
+            const client = new TestableGenericHttpClient(apertus);
+
+            expect(client.testDetectModelMismatch('swiss-ai/apertus-70b-instruct')).toBeNull();
+            expect(client.testDetectModelMismatch('  Swiss-AI/Apertus-70B-Instruct  ')).toBeNull();
+        });
+
+        it('should accept a more specific id than requested', () => {
+            // OpenAI answers gpt-4o with gpt-4o-2024-08-06; that is not a substitution.
+            const client = new TestableGenericHttpClient({ ...apertus, modelName: 'gpt-4o' });
+
+            expect(client.testDetectModelMismatch('gpt-4o-2024-08-06')).toBeNull();
+        });
+
+        it('should not treat a missing model field as a mismatch', () => {
+            const client = new TestableGenericHttpClient(apertus);
+
+            expect(client.testDetectModelMismatch(undefined)).toBeNull();
+            expect(client.testDetectModelMismatch('')).toBeNull();
+            expect(client.testDetectModelMismatch(null)).toBeNull();
+        });
+
+        it('should downgrade to a warning when WEVAL_ALLOW_MODEL_MISMATCH is set', () => {
+            process.env.WEVAL_ALLOW_MODEL_MISMATCH = 'true';
+            const client = new TestableGenericHttpClient(apertus);
+
+            expect(client.testDetectModelMismatch('aisingapore/Qwen-SEA-LION-v4-32B-IT')).toBeNull();
+
+            delete process.env.WEVAL_ALLOW_MODEL_MISMATCH;
         });
     });
 
