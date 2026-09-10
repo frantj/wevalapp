@@ -92,7 +92,14 @@ node-compile-cache/
 tools/azure-agent-proxy/
 
 # Local personal docs (not for public repo)
-docs/jesper's docs/
+# Note the trailing /* rather than /: git will not descend into an excluded
+# directory, so the negation below would never fire against `docs/jesper's docs/`.
+docs/jesper's docs/*
+# Exception: the run checklist carries no credentials and has to survive to the
+# next run. Everything else in that folder stays local — it holds a .env, and
+# AZURE-AGENT-PROXY-README.md documents the credential-bearing proxy ignored
+# above, including real tenant and client IDs. This repo is public.
+!docs/jesper's docs/WPS-BENCHMARK-RUN-CHECKLIST.md
 
 # Sentry
 .sentryclirc
