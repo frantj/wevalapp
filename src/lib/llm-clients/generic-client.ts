@@ -1,5 +1,8 @@
 import { LLMApiCallOptions, LLMApiCallResult, StreamChunk, CustomModelDefinition } from './types';
 
+/** Server-side statuses that are worth retrying: bad gateway, unavailable, timeout, overloaded. */
+const TRANSIENT_STATUS_CODES = new Set([502, 503, 504, 529]);
+
 class GenericHttpClient {
     private config: CustomModelDefinition;
 
@@ -74,28 +77,28 @@ class GenericHttpClient {
         return message;
     }
 
+    /** Retry-After is either a count of seconds or an HTTP date. Returns seconds. */
+    private parseRetryAfter(headerValue: string | null | undefined): number | undefined {
+        if (!headerValue) return undefined;
+
+        const seconds = parseInt(headerValue, 10);
+        if (!isNaN(seconds)) return seconds;
+
+        const retryDate = new Date(headerValue);
+        if (!isNaN(retryDate.getTime())) {
+            return Math.max(0, Math.ceil((retryDate.getTime() - Date.now()) / 1000));
+        }
+        return undefined;
+    }
+
     /**
      * Mirrors openrouter-client.ts so that a 429 on the custom-model path is retryable
      * by the shared exponential-backoff path in llm-service.
      */
     private parseRateLimitHeaders(headers: { get(name: string): string | null | undefined }): Partial<LLMApiCallResult> {
-        const retryAfterHeader = headers.get('Retry-After');
         const rateLimitReset = headers.get('X-RateLimit-Reset');
         const rateLimitRemaining = headers.get('X-RateLimit-Remaining');
-
-        // Retry-After is either a number of seconds or an HTTP date.
-        let retryAfter: number | undefined;
-        if (retryAfterHeader) {
-            const parsed = parseInt(retryAfterHeader, 10);
-            if (!isNaN(parsed)) {
-                retryAfter = parsed;
-            } else {
-                const retryDate = new Date(retryAfterHeader);
-                if (!isNaN(retryDate.getTime())) {
-                    retryAfter = Math.max(0, Math.ceil((retryDate.getTime() - Date.now()) / 1000));
-                }
-            }
-        }
+        const retryAfter = this.parseRetryAfter(headers.get('Retry-After'));
 
         console.warn(
             `[GenericHttpClient] Rate limit (429) from ${this.config.id}. ` +
@@ -493,6 +496,19 @@ class GenericHttpClient {
                 // --gen-retries, and ten of them trip the pipeline circuit breaker.
                 if (response.status === 429) {
                     return { responseText: '', ...this.parseRateLimitHeaders(response.headers) };
+                }
+                // Transient server-side failures are retryable but are not rate limits.
+                // Featherless returns 503 'capacity_exhausted' when a model is at capacity;
+                // shouldRetry() would otherwise treat it as permanent and the circuit breaker
+                // would fail the whole run on ten of them.
+                if (TRANSIENT_STATUS_CODES.has(response.status)) {
+                    console.warn(`[GenericHttpClient] Transient ${response.status} from ${this.config.id}; will retry. Body: ${errorBody.slice(0, 200)}`);
+                    return {
+                        responseText: '',
+                        error: `Custom API transient error (${this.config.id}): ${response.status} ${response.statusText} - ${errorBody}`,
+                        isTransientError: true,
+                        retryAfter: this.parseRetryAfter(response.headers.get('Retry-After')),
+                    };
                 }
                 return { responseText: '', error: `Custom API Error (${this.config.id}): ${response.status} ${response.statusText} - ${errorBody}` };
             }

@@ -28,6 +28,10 @@ class TestableGenericHttpClient extends GenericHttpClient {
     public testDetectModelMismatch(returnedModel?: unknown): string | null {
         return (this as any).detectModelMismatch(returnedModel);
     }
+
+    public testParseRetryAfter(headerValue: string | null | undefined): number | undefined {
+        return (this as any).parseRetryAfter(headerValue);
+    }
 }
 
 describe('GenericHttpClient', () => {
@@ -431,6 +435,30 @@ describe('GenericHttpClient', () => {
             expect(redacted['api-key']).toBe('[redacted]');
             expect(redacted['User-Agent']).toBe('wps-benchmark/6.7');
             expect(client.testGetHeaders()['Authorization']).toBe('Bearer live-secret');
+        });
+    });
+
+    describe('Retry-After parsing', () => {
+        const model: CustomModelDefinition = {
+            id: 'featherless:apertus-70b-instruct-2509',
+            url: 'https://api.featherless.ai/v1/chat/completions',
+            modelName: 'swiss-ai/Apertus-70B-Instruct-2509',
+            inherit: 'openai'
+        };
+
+        it('should parse seconds, HTTP dates, and absence', () => {
+            const client = new TestableGenericHttpClient(model);
+
+            expect(client.testParseRetryAfter('45')).toBe(45);
+            expect(client.testParseRetryAfter(null)).toBeUndefined();
+            expect(client.testParseRetryAfter(undefined)).toBeUndefined();
+            // Featherless returns 503 capacity_exhausted with no Retry-After at all.
+            expect(client.testParseRetryAfter('')).toBeUndefined();
+            expect(client.testParseRetryAfter('not-a-date')).toBeUndefined();
+
+            const parsed = client.testParseRetryAfter(new Date(Date.now() + 30_000).toUTCString());
+            expect(parsed).toBeGreaterThan(20);
+            expect(parsed).toBeLessThanOrEqual(30);
         });
     });
 

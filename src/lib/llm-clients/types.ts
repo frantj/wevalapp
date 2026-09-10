@@ -42,6 +42,12 @@ export interface LLMApiCallResult {
   rateLimitReset?: number; // Unix timestamp when rate limit resets (from X-RateLimit-Reset header)
   rateLimitRemaining?: number; // Number of requests remaining (from X-RateLimit-Remaining header)
 
+  /**
+   * True for a transient server-side failure that is worth retrying but is not a rate limit —
+   * 502/503/504/529. Distinct from isRateLimitError so logs and backoff stay accurate.
+   */
+  isTransientError?: boolean;
+
   // We can add more fields here if needed, like token counts, finish reasons etc.
 }
 

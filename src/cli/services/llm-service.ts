@@ -162,6 +162,8 @@ export async function getModelResponse(params: GetModelResponseParams): Promise<
             error.retryAfter = response.retryAfter;
             error.rateLimitReset = response.rateLimitReset;
             error.rateLimitRemaining = response.rateLimitRemaining;
+            // Transient server-side failures (502/503/504/529) reported by the client
+            error.isTransientError = response.isTransientError;
             // Tag network/transient errors as retryable
             const msg = (response.error || '').toLowerCase();
             error.isNetworkError = msg.includes('network') || msg.includes('unexpected end of json') || msg.includes('timed out');
@@ -182,6 +184,14 @@ export async function getModelResponse(params: GetModelResponseParams): Promise<
                     return true;
                 }
 
+                // Retry transient server-side failures a client has explicitly flagged
+                // (502/503/504/529). A provider returning 503 because a model is at
+                // capacity is not a permanent error, and treating it as one lets the
+                // circuit breaker fail an entire run on a temporary condition.
+                if (error.isTransientError) {
+                    return true;
+                }
+
                 // Retry network/connection errors
                 if (error.isNetworkError ||
                     error.code === 'ECONNRESET' ||
@@ -191,7 +201,7 @@ export async function getModelResponse(params: GetModelResponseParams): Promise<
                     return true;
                 }
 
-                // Don't retry other errors (4xx client errors, 500 server errors, etc.)
+                // Don't retry other errors (4xx client errors, unflagged 500s, etc.)
                 return false;
             },
 
