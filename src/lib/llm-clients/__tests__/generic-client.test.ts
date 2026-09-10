@@ -1,5 +1,5 @@
 import { GenericHttpClient } from '../generic-client';
-import { CustomModelDefinition, LLMApiCallOptions } from '../types';
+import { CustomModelDefinition, LLMApiCallOptions, LLMApiCallResult } from '../types';
 
 // Create a test version of GenericHttpClient that exposes the internal methods
 class TestableGenericHttpClient extends GenericHttpClient {
@@ -15,6 +15,10 @@ class TestableGenericHttpClient extends GenericHttpClient {
     // Expose the private getHeaders method for testing
     public testGetHeaders(): Record<string, string> {
         return (this as any).getHeaders();
+    }
+
+    public testParseRateLimitHeaders(headers: Map<string, string>): Partial<LLMApiCallResult> {
+        return (this as any).parseRateLimitHeaders(headers);
     }
 }
 
@@ -367,6 +371,48 @@ describe('GenericHttpClient', () => {
             const headers = client.testGetHeaders();
 
             expect(headers['Content-Type']).toBe('application/json');
+        });
+    });
+
+    describe('Rate limit handling', () => {
+        // A 429 must be flagged as retryable, otherwise shouldRetry() in llm-service
+        // treats it as a permanent 4xx and the pipeline circuit breaker trips.
+        const rateLimitedModel: CustomModelDefinition = {
+            id: 'publicai:apertus-70b-instruct-2509',
+            url: 'http://custom-api.com/v1/chat/completions',
+            modelName: 'swiss-ai/Apertus-70B-Instruct-2509',
+            inherit: 'openai'
+        };
+
+        it('should flag a 429 as a rate limit error and parse Retry-After seconds', () => {
+            const client = new TestableGenericHttpClient(rateLimitedModel);
+            const result = client.testParseRateLimitHeaders(new Map([
+                ['Retry-After', '30'],
+                ['X-RateLimit-Remaining', '0'],
+            ]));
+
+            expect(result.isRateLimitError).toBe(true);
+            expect(result.retryAfter).toBe(30);
+            expect(result.rateLimitRemaining).toBe(0);
+        });
+
+        it('should parse an HTTP-date Retry-After into seconds', () => {
+            const client = new TestableGenericHttpClient(rateLimitedModel);
+            const result = client.testParseRateLimitHeaders(new Map([
+                ['Retry-After', new Date(Date.now() + 60_000).toUTCString()],
+            ]));
+
+            expect(result.isRateLimitError).toBe(true);
+            expect(result.retryAfter).toBeGreaterThan(50);
+            expect(result.retryAfter).toBeLessThanOrEqual(60);
+        });
+
+        it('should still flag a 429 that carries no rate limit headers', () => {
+            const client = new TestableGenericHttpClient(rateLimitedModel);
+            const result = client.testParseRateLimitHeaders(new Map());
+
+            expect(result.isRateLimitError).toBe(true);
+            expect(result.retryAfter).toBeUndefined();
         });
     });
 

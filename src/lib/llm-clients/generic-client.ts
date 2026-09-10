@@ -15,6 +15,45 @@ class GenericHttpClient {
         return headers;
     }
 
+    /**
+     * Mirrors openrouter-client.ts so that a 429 on the custom-model path is retryable
+     * by the shared exponential-backoff path in llm-service.
+     */
+    private parseRateLimitHeaders(headers: { get(name: string): string | null | undefined }): Partial<LLMApiCallResult> {
+        const retryAfterHeader = headers.get('Retry-After');
+        const rateLimitReset = headers.get('X-RateLimit-Reset');
+        const rateLimitRemaining = headers.get('X-RateLimit-Remaining');
+
+        // Retry-After is either a number of seconds or an HTTP date.
+        let retryAfter: number | undefined;
+        if (retryAfterHeader) {
+            const parsed = parseInt(retryAfterHeader, 10);
+            if (!isNaN(parsed)) {
+                retryAfter = parsed;
+            } else {
+                const retryDate = new Date(retryAfterHeader);
+                if (!isNaN(retryDate.getTime())) {
+                    retryAfter = Math.max(0, Math.ceil((retryDate.getTime() - Date.now()) / 1000));
+                }
+            }
+        }
+
+        console.warn(
+            `[GenericHttpClient] Rate limit (429) from ${this.config.id}. ` +
+            `Retry-After: ${retryAfter ?? 'not specified'}, ` +
+            `Reset: ${rateLimitReset ?? 'not specified'}, ` +
+            `Remaining: ${rateLimitRemaining ?? 'not specified'}`
+        );
+
+        return {
+            error: `Rate limit exceeded (${this.config.id}). ${retryAfter ? `Retry after ${retryAfter}s.` : 'Please retry later.'}`,
+            isRateLimitError: true,
+            retryAfter,
+            rateLimitReset: rateLimitReset ? parseInt(rateLimitReset, 10) : undefined,
+            rateLimitRemaining: rateLimitRemaining ? parseInt(rateLimitRemaining, 10) : undefined,
+        };
+    }
+
     private buildRequestBody(options: LLMApiCallOptions, streaming = false): any {
         const { 
             messages: optionMessages, 
@@ -390,6 +429,12 @@ class GenericHttpClient {
             if (!response.ok) {
                 const errorBody = await response.text();
                 console.log(`[GenericHttpClient] Error response from ${this.config.id}:`, errorBody);
+                // A 429 must be flagged, or shouldRetry() in llm-service treats it as a
+                // permanent 4xx: the cell dies on the first attempt regardless of
+                // --gen-retries, and ten of them trip the pipeline circuit breaker.
+                if (response.status === 429) {
+                    return { responseText: '', ...this.parseRateLimitHeaders(response.headers) };
+                }
                 return { responseText: '', error: `Custom API Error (${this.config.id}): ${response.status} ${response.statusText} - ${errorBody}` };
             }
 
