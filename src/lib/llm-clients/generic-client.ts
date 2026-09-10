@@ -7,12 +7,40 @@ class GenericHttpClient {
         this.config = config;
     }
 
+    /**
+     * Expands ${VAR} references in a header value from process.env, so a blueprint can
+     * carry `Authorization: 'Bearer ${MY_API_KEY}'` instead of a literal secret. Without
+     * this, custom models are the only client that cannot read keys from .env, which
+     * forces the key into the blueprint file — and blueprints are archived and published.
+     * An undefined variable is left as-is so the resulting auth failure names the variable.
+     */
+    private static expandEnvRefs(value: string): string {
+        return value.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (match, name) => {
+            const resolved = process.env[name];
+            if (resolved === undefined) {
+                console.warn(`[GenericHttpClient] Header references \${${name}}, which is not set in the environment. Sending the placeholder unexpanded.`);
+                return match;
+            }
+            return resolved;
+        });
+    }
+
     private getHeaders() {
         const headers: Record<string, string> = {
             'Content-Type': 'application/json',
-            ...this.config.headers,
         };
+        for (const [key, value] of Object.entries(this.config.headers ?? {})) {
+            headers[key] = GenericHttpClient.expandEnvRefs(value);
+        }
         return headers;
+    }
+
+    /** Headers with credential-bearing values masked, for logging. */
+    private getRedactedHeaders() {
+        const SENSITIVE = /^(authorization|api-key|x-api-key|proxy-authorization)$/i;
+        return Object.fromEntries(
+            Object.entries(this.getHeaders()).map(([key, value]) => [key, SENSITIVE.test(key) ? '[redacted]' : value]),
+        );
     }
 
     /**
@@ -411,7 +439,7 @@ class GenericHttpClient {
         console.log(`[GenericHttpClient] Making request to custom model ${this.config.id}`);
         console.log(`[GenericHttpClient] URL: ${this.config.url}`);
         console.log(`[GenericHttpClient] Request body:`, JSON.stringify(body, null, 2));
-        console.log(`[GenericHttpClient] Headers:`, JSON.stringify(this.getHeaders(), null, 2));
+        console.log(`[GenericHttpClient] Headers:`, JSON.stringify(this.getRedactedHeaders(), null, 2));
 
         try {
             const controller = new AbortController();

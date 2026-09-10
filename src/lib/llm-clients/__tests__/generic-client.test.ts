@@ -17,6 +17,10 @@ class TestableGenericHttpClient extends GenericHttpClient {
         return (this as any).getHeaders();
     }
 
+    public testGetRedactedHeaders(): Record<string, string> {
+        return (this as any).getRedactedHeaders();
+    }
+
     public testParseRateLimitHeaders(headers: Map<string, string>): Partial<LLMApiCallResult> {
         return (this as any).parseRateLimitHeaders(headers);
     }
@@ -371,6 +375,58 @@ describe('GenericHttpClient', () => {
             const headers = client.testGetHeaders();
 
             expect(headers['Content-Type']).toBe('application/json');
+        });
+
+        it('should expand ${VAR} references from the environment', () => {
+            process.env.TEST_GENERIC_CLIENT_KEY = 'secret-from-env';
+            const customModel: CustomModelDefinition = {
+                id: 'custom:env-key',
+                url: 'http://custom-api.com/generate',
+                modelName: 'custom-model',
+                inherit: 'openai',
+                headers: { 'Authorization': 'Bearer ${TEST_GENERIC_CLIENT_KEY}' }
+            };
+
+            const client = new TestableGenericHttpClient(customModel);
+            expect(client.testGetHeaders()['Authorization']).toBe('Bearer secret-from-env');
+
+            delete process.env.TEST_GENERIC_CLIENT_KEY;
+        });
+
+        it('should leave an unset ${VAR} reference unexpanded so the failure names it', () => {
+            delete process.env.TEST_GENERIC_CLIENT_MISSING;
+            const customModel: CustomModelDefinition = {
+                id: 'custom:missing-key',
+                url: 'http://custom-api.com/generate',
+                modelName: 'custom-model',
+                inherit: 'openai',
+                headers: { 'Authorization': 'Bearer ${TEST_GENERIC_CLIENT_MISSING}' }
+            };
+
+            const client = new TestableGenericHttpClient(customModel);
+            expect(client.testGetHeaders()['Authorization']).toBe('Bearer ${TEST_GENERIC_CLIENT_MISSING}');
+        });
+
+        it('should redact credential headers for logging but not for the request', () => {
+            const customModel: CustomModelDefinition = {
+                id: 'custom:redaction',
+                url: 'http://custom-api.com/generate',
+                modelName: 'custom-model',
+                inherit: 'openai',
+                headers: {
+                    'Authorization': 'Bearer live-secret',
+                    'api-key': 'another-secret',
+                    'User-Agent': 'wps-benchmark/6.7'
+                }
+            };
+
+            const client = new TestableGenericHttpClient(customModel);
+            const redacted = client.testGetRedactedHeaders();
+
+            expect(redacted['Authorization']).toBe('[redacted]');
+            expect(redacted['api-key']).toBe('[redacted]');
+            expect(redacted['User-Agent']).toBe('wps-benchmark/6.7');
+            expect(client.testGetHeaders()['Authorization']).toBe('Bearer live-secret');
         });
     });
 
