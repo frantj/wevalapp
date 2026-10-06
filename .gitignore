@@ -100,6 +100,8 @@ docs/jesper's docs/*
 # AZURE-AGENT-PROXY-README.md documents the credential-bearing proxy ignored
 # above, including real tenant and client IDs. This repo is public.
 !docs/jesper's docs/WPS-BENCHMARK-RUN-CHECKLIST.md
+# The custom-SUT how-to uses only ${VAR} placeholders and localhost URLs.
+!docs/jesper's docs/HOW-TO-ADD-A-CUSTOM-SUT.md
 
 # Sentry
 .sentryclirc
